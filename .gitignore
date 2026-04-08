@@ -1,0 +1,10 @@
+# Binary
+iptv
+*.exe
+
+# Environment
+.env
+*.env
+
+# Build artifacts
+dist/
