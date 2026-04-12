@@ -33,7 +33,7 @@ func GenerateM3U(services []api.ServiceInfo, baseURL string) string {
 			tvgID, s.ServiceName, groupTitle(s.Onid), s.ServiceName,
 		))
 		sb.WriteString(fmt.Sprintf(
-			"%s/stream/%d/%d/%d\n",
+			"http://%s/stream/%d/%d/%d\n",
 			baseURL, s.Onid, s.Tsid, s.Sid,
 		))
 	}
