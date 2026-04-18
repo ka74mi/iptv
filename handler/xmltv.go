@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"bytes"
 	"encoding/xml"
 	"fmt"
 	"time"
@@ -9,9 +10,9 @@ import (
 )
 
 type xmlTV struct {
-	XMLName     xml.Name      `xml:"tv"`
-	Channels    []xmlChannel  `xml:"channel"`
-	Programmes  []xmlProgramme `xml:"programme"`
+	XMLName    xml.Name       `xml:"tv"`
+	Channels   []xmlChannel   `xml:"channel"`
+	Programmes []xmlProgramme `xml:"programme"`
 }
 
 type xmlChannel struct {
@@ -28,10 +29,14 @@ type xmlProgramme struct {
 }
 
 func GenerateXMLTV(seis []api.ServiceEventInfo) ([]byte, error) {
-	tv := xmlTV{}
+	// 7日分の実測値から 1サービスあたり約195番組のため *200 で確保
+	tv := xmlTV{
+		Channels:   make([]xmlChannel, 0, len(seis)),
+		Programmes: make([]xmlProgramme, 0, len(seis)*200),
+	}
 
 	for _, sei := range seis {
-		if sei.ServiceInfo.ServiceType != 0x01 {
+		if sei.ServiceInfo.ServiceType != serviceTypeDigitalTV {
 			continue
 		}
 		tvgID := fmt.Sprintf("%d.%d.%d",
@@ -59,11 +64,14 @@ func GenerateXMLTV(seis []api.ServiceEventInfo) ([]byte, error) {
 		}
 	}
 
-	out, err := xml.MarshalIndent(tv, "", "  ")
-	if err != nil {
+	var buf bytes.Buffer
+	buf.WriteString(xml.Header)
+	enc := xml.NewEncoder(&buf)
+	enc.Indent("", "  ")
+	if err := enc.Encode(tv); err != nil {
 		return nil, err
 	}
-	return append([]byte(xml.Header), out...), nil
+	return buf.Bytes(), nil
 }
 
 func formatXMLTVTime(t time.Time) string {
