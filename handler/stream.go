@@ -3,39 +3,39 @@ package handler
 import (
 	"io"
 	"log"
-	"net"
 	"net/http"
 	"strconv"
+	"strings"
+	"sync"
 	"time"
-	"context"
 
 	"github.com/ka74mi/iptv/api"
 )
+
+// tsBufPool はTSストリーム転送用バッファのプール。
+// TSパケット(188byte)×256 = 48KiB。複数同時ストリーム時のアロケーションを抑制する。
+var tsBufPool = sync.Pool{
+	New: func() any { return make([]byte, 188*256) },
+}
 
 // StreamHandler はHTTPリクエストを受けてEDCBからTSストリームを転送するハンドラ。
 //
 // URLパス形式: /stream/{onid}/{tsid}/{sid}
 //
 // 【EDCBストリーム配信の全体シーケンス】
-//  1. SendNwTVMode(2)    - TCP送信モードをグローバル設定
-//  2. SendNwTVIDSetCh()  - チューナー起動、EpgDataCap_BonのプロセスIDを取得
-//  3. OpenViewStream()   - SrvPipeストリームのTCP接続確立（リトライ必須）
-//  4. io.CopyBuffer()    - TSデータをHTTPクライアントに転送
-//  5. conn.Close()       - SrvPipe接続を先に切断
-//  6. SendNwTVIDClose()  - チューナー終了（必ずconn.Closeの後）
+//  1. SendNwTVMode(2)               - TCP送信モードをグローバル設定
+//  2. SendNwTVIDSetCh()             - チューナー起動、EpgDataCap_BonのプロセスIDを取得
+//  3. OpenViewStreamWithRetry()     - SrvPipeストリームのTCP接続確立（リトライ込み）
+//  4. io.CopyBuffer()               - TSデータをHTTPクライアントに転送
+//  5. conn.Close()                  - SrvPipe接続を先に切断
+//  6. SendNwTVIDClose()             - チューナー終了（必ずconn.Closeの後）
 func StreamHandler(client *api.Client) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		log.Printf("stream request: %s", r.URL.Path)
-		parts := splitPath(r.URL.Path)
-		if len(parts) < 4 {
+
+		onid, tsid, sid, ok := parseStreamPath(r.URL.Path)
+		if !ok {
 			http.Error(w, "invalid path", http.StatusBadRequest)
-			return
-		}
-		onid, err1 := strconv.ParseUint(parts[1], 10, 16)
-		tsid, err2 := strconv.ParseUint(parts[2], 10, 16)
-		sid, err3 := strconv.ParseUint(parts[3], 10, 16)
-		if err1 != nil || err2 != nil || err3 != nil {
-			http.Error(w, "invalid ids", http.StatusBadRequest)
 			return
 		}
 
@@ -44,43 +44,26 @@ func StreamHandler(client *api.Client) http.HandlerFunc {
 		// EpgDataCap_Bonが -nonw フラグ付きで起動されTCP出力が無効になる。
 		if err := client.SendNwTVMode(2); err != nil {
 			log.Printf("SendNwTVMode error: %v", err)
-			http.Error(w, "failed to set nwtv mode: "+err.Error(), http.StatusInternalServerError)
+			http.Error(w, "internal server error", http.StatusInternalServerError)
 			return
 		}
 
 		// チューナーを起動してプロセスIDを取得する。
 		// 戻り値はEpgDataCap_BonのプロセスID（NetworkTV IDではない）。
-		processID, err := client.SendNwTVIDSetCh(uint16(onid), uint16(tsid), uint16(sid))
+		processID, err := client.SendNwTVIDSetCh(onid, tsid, sid)
 		log.Printf("SendNwTVIDSetCh: processID=%d err=%v", processID, err)
 		if err != nil {
-			http.Error(w, "failed to set ch: "+err.Error(), http.StatusInternalServerError)
+			log.Printf("SendNwTVIDSetCh error: %v", err)
+			http.Error(w, "internal server error", http.StatusInternalServerError)
 			return
 		}
 
-		// SrvPipeストリームに接続する。
-		// SetCh成功直後はEpgDataCap_BonがFIFOを準備中のため即座には成功しない。
-		// r.Context()ベースのリトライで、クライアント切断時は即座に停止する。
-		var conn net.Conn
-		{
-			ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
-			defer cancel()
-			for {
-				conn, err = client.OpenViewStream(processID)
-				log.Printf("OpenViewStream: processID=%d err=%v", processID, err)
-				if err == nil {
-					break
-				}
-				select {
-				case <-ctx.Done():
-					http.Error(w, "stream unavailable: "+ctx.Err().Error(), http.StatusServiceUnavailable)
-					return
-				case <-time.After(200 * time.Millisecond):
-					// リトライ
-				}
-			}
-		}
+		// SrvPipeストリームに接続する（最大10秒リトライ）。
+		// リトライロジックの詳細は OpenViewStreamWithRetry のコメントを参照。
+		conn, err := client.OpenViewStreamWithRetry(processID, 10*time.Second)
 		if err != nil {
-			http.Error(w, "failed to open stream: "+err.Error(), http.StatusInternalServerError)
+			log.Printf("OpenViewStreamWithRetry error: %v", err)
+			http.Error(w, "internal server error", http.StatusInternalServerError)
 			return
 		}
 
@@ -110,7 +93,9 @@ func StreamHandler(client *api.Client) http.HandlerFunc {
 			f.Flush()
 		}
 
-		buf := make([]byte, 188*256) // TSパケット(188byte)×256
+		buf := tsBufPool.Get().([]byte)
+		defer tsBufPool.Put(buf)
+
 		done := make(chan struct{})
 		go func() {
 			defer close(done)
@@ -131,21 +116,19 @@ func StreamHandler(client *api.Client) http.HandlerFunc {
 	}
 }
 
-func splitPath(path string) []string {
-	parts := []string{}
-	current := ""
-	for _, c := range path {
-		if c == '/' {
-			if current != "" {
-				parts = append(parts, current)
-			}
-			current = ""
-		} else {
-			current += string(c)
-		}
+// parseStreamPath は "/stream/{onid}/{tsid}/{sid}" 形式のパスを解析する。
+// strings.FieldsFunc を使いループ内アロケーションを排除している。
+func parseStreamPath(path string) (onid, tsid, sid uint16, ok bool) {
+	parts := strings.FieldsFunc(path, func(r rune) bool { return r == '/' })
+	// parts[0]="stream", parts[1]=onid, parts[2]=tsid, parts[3]=sid
+	if len(parts) < 4 {
+		return 0, 0, 0, false
 	}
-	if current != "" {
-		parts = append(parts, current)
+	o, err1 := strconv.ParseUint(parts[1], 10, 16)
+	t, err2 := strconv.ParseUint(parts[2], 10, 16)
+	s, err3 := strconv.ParseUint(parts[3], 10, 16)
+	if err1 != nil || err2 != nil || err3 != nil {
+		return 0, 0, 0, false
 	}
-	return parts
+	return uint16(o), uint16(t), uint16(s), true
 }

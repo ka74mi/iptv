@@ -3,7 +3,10 @@ package api
 import (
 	"encoding/binary"
 	"fmt"
+	"io"
+	"log"
 	"net"
+	"strconv"
 	"time"
 	"unicode/utf16"
 )
@@ -29,15 +32,18 @@ func NewClient(host string, port int) *Client {
 //
 // リクエスト形式: [cmd:4LE][payloadSize:4LE][payload...]
 // レスポンス形式: [ret:4LE][payloadSize:4LE][payload...]
-//   ret=1(CMD_SUCCESS) のみ成功。それ以外はエラー。
-//   ret=0 はパラメータ不正・対象が見つからない等を意味する。
+//
+//	ret=1(CMD_SUCCESS) のみ成功。それ以外はエラー。
+//	ret=0 はパラメータ不正・対象が見つからない等を意味する。
 func (c *Client) sendCmd(cmd uint32, payload []byte) ([]byte, error) {
-	conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", c.host, c.port), c.timeout)
+	conn, err := net.DialTimeout("tcp", net.JoinHostPort(c.host, strconv.Itoa(c.port)), c.timeout)
 	if err != nil {
 		return nil, err
 	}
 	defer conn.Close()
-	conn.SetDeadline(time.Now().Add(c.timeout))
+	if err := conn.SetDeadline(time.Now().Add(c.timeout)); err != nil {
+		return nil, err
+	}
 
 	size := uint32(len(payload))
 	buf := make([]byte, 8+size)
@@ -50,7 +56,7 @@ func (c *Client) sendCmd(cmd uint32, payload []byte) ([]byte, error) {
 	}
 
 	header := make([]byte, 8)
-	if err := readFull(conn, header); err != nil {
+	if _, err := io.ReadFull(conn, header); err != nil {
 		return nil, err
 	}
 	ret := binary.LittleEndian.Uint32(header[0:])
@@ -58,27 +64,23 @@ func (c *Client) sendCmd(cmd uint32, payload []byte) ([]byte, error) {
 	if ret != cmdSuccess {
 		return nil, fmt.Errorf("EDCB returned error: %d", ret)
 	}
+	// 異常に大きいレスポンスサイズでのOOMを防ぐ
+	if rsize > maxResponseSize {
+		return nil, fmt.Errorf("response too large: %d bytes", rsize)
+	}
 
 	rbuf := make([]byte, rsize)
-	if err := readFull(conn, rbuf); err != nil {
+	if _, err := io.ReadFull(conn, rbuf); err != nil {
 		return nil, err
 	}
 	return rbuf, nil
 }
 
-func readFull(conn net.Conn, buf []byte) error {
-	total := 0
-	for total < len(buf) {
-		n, err := conn.Read(buf[total:])
-		total += n
-		if err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-const cmdSuccess = 1
+const (
+	cmdSuccess      = 1
+	maxResponseSize = 64 * 1024 * 1024 // 64MB
+	maxVectorCount  = 100_000
+)
 
 const (
 	cmdEnumService     = 1021
@@ -193,11 +195,8 @@ func (r *reader) readString() (string, error) {
 		u16[i] = binary.LittleEndian.Uint16(r.buf[r.pos+i*2:])
 	}
 	r.pos += strLen + 2 // null終端分
-	return string(utf16ToRunes(u16)), nil
-}
-
-func utf16ToRunes(u16 []uint16) []rune {
-	return []rune(string(utf16.Decode(u16)))
+	// utf16.Decode は []rune を返すので string() で直接変換する（中間 []rune 不要）
+	return string(utf16.Decode(u16)), nil
 }
 
 // readStruct は構造体の先頭サイズを読んでサブリーダーを返す。
@@ -207,11 +206,12 @@ func (r *reader) readStruct() (*reader, error) {
 	if err != nil {
 		return nil, err
 	}
-	if size < 4 || r.pos+int(size)-4 > len(r.buf) {
+	end := r.pos + int(size) - 4
+	if size < 4 || end < r.pos || end > len(r.buf) {
 		return nil, fmt.Errorf("readStruct: invalid size %d", size)
 	}
-	sub := &reader{buf: r.buf[r.pos : r.pos+int(size)-4]}
-	r.pos += int(size) - 4
+	sub := &reader{buf: r.buf[r.pos:end]}
+	r.pos = end
 	return sub, nil
 }
 
@@ -251,11 +251,12 @@ func (r *reader) readVector(readFunc func(*reader) error) error {
 	if err != nil {
 		return err
 	}
-	if size < 8 || count < 0 {
+	end := r.pos + int(size) - 8
+	if size < 8 || count < 0 || count > maxVectorCount || end < r.pos || end > len(r.buf) {
 		return fmt.Errorf("readVector: invalid size=%d count=%d", size, count)
 	}
-	sub := &reader{buf: r.buf[r.pos : r.pos+int(size)-8]}
-	r.pos += int(size) - 8
+	sub := &reader{buf: r.buf[r.pos:end]}
+	r.pos = end
 	for i := 0; i < int(count); i++ {
 		if err := readFunc(sub); err != nil {
 			return err
@@ -282,8 +283,12 @@ func readServiceInfo(r *reader) (ServiceInfo, error) {
 	if s.ServiceType, err = sub.readByte(); err != nil {
 		return s, err
 	}
-	sub.readByte()   // partial_reception_flag
-	sub.readString() // service_provider_name
+	if _, err = sub.readByte(); err != nil { // partial_reception_flag（使用しないが読み飛ばしエラーは伝播）
+		return s, err
+	}
+	if _, err = sub.readString(); err != nil { // service_provider_name（使用しないが読み飛ばしエラーは伝播）
+		return s, err
+	}
 	if s.ServiceName, err = sub.readString(); err != nil {
 		return s, err
 	}
@@ -400,6 +405,7 @@ func (c *Client) EnumService() ([]ServiceInfo, error) {
 
 func (c *Client) EnumPgInfoEx(start, end time.Time) ([]ServiceEventInfo, error) {
 	payload := make([]byte, 32)
+	// 全サービス対象フィルタ（onid/tsid/sid をすべて 0xFFFF で埋める）
 	binary.LittleEndian.PutUint64(payload[0:], 0xffffffffffff)
 	binary.LittleEndian.PutUint64(payload[8:], 0xffffffffffff)
 	binary.LittleEndian.PutUint64(payload[16:], timeToFileTime(start))
@@ -439,22 +445,17 @@ func (w *writer) writeByte(v uint8) {
 	w.buf = append(w.buf, v)
 }
 
+// binary.LittleEndian.AppendUint* (Go 1.23〜) を使い中間スライスのアロケーションを排除
 func (w *writer) writeUshort(v uint16) {
-	b := make([]byte, 2)
-	binary.LittleEndian.PutUint16(b, v)
-	w.buf = append(w.buf, b...)
+	w.buf = binary.LittleEndian.AppendUint16(w.buf, v)
 }
 
 func (w *writer) writeInt(v int32) {
-	b := make([]byte, 4)
-	binary.LittleEndian.PutUint32(b, uint32(v))
-	w.buf = append(w.buf, b...)
+	w.buf = binary.LittleEndian.AppendUint32(w.buf, uint32(v))
 }
 
 func (w *writer) writeUint(v uint32) {
-	b := make([]byte, 4)
-	binary.LittleEndian.PutUint32(b, v)
-	w.buf = append(w.buf, b...)
+	w.buf = binary.LittleEndian.AppendUint32(w.buf, v)
 }
 
 // SendNwTVMode はEDCBのグローバルなNetworkTV送信モードを設定する。
@@ -479,15 +480,16 @@ func (c *Client) SendNwTVMode(mode uint32) error {
 // 【重要】use_bon_ch=0, space_or_id=0, ch_or_mode=0 の構成では、
 // 送信モードはSendNwTVModeのグローバル設定に依存する。
 // use_bon_ch=1 にすると space_or_id がNetworkTV IDとして扱われ、
-// ch_or_mode で送信モードを個別指定できる。
+// ch_or_mode で送信モードを個別指定できる（KonomiTVはこちらの方式）。
 //
 // 【注意】SetChが成功してプロセスIDが返っても、EpgDataCap_Bonが
 // BonDriverを初期化してSrvPipeにデータを流し始めるまでタイムラグがある。
 // OpenViewStreamはリトライが必須。
 //
 // 【NetworkTV IDとプロセスIDの混同に注意】
-// - SetChの戻り値 = EpgDataCap_BonのプロセスID → OpenViewStreamに使う
-// - CloseNWTVに渡す値 = space_or_id で指定したNetworkTV ID（use_bon_ch=0なら0）
+//   - SetChの戻り値 = EpgDataCap_BonのプロセスID → OpenViewStreamに使う
+//   - CloseNWTVに渡す値 = space_or_id で指定したNetworkTV ID（use_bon_ch=0なら0）
+//
 // この2つを混同するとCloseが失敗してEpgDataCap_Bonが残り続ける。
 func (c *Client) SendNwTVIDSetCh(onid, tsid, sid uint16) (int32, error) {
 	w := newWriter()
@@ -517,8 +519,9 @@ func (c *Client) SendNwTVIDSetCh(onid, tsid, sid uint16) (int32, error) {
 // EpgDataCap_BonのプロセスIDを渡しても対象が見つからずエラーになる。
 //
 // 【正しいクリーンアップ順序】
-// 1. conn.Close()（SrvPipeのTCPコネクションを先に切断）
-// 2. SendNwTVIDClose（その後でチューナー終了コマンドを送る）
+//  1. conn.Close()（SrvPipeのTCPコネクションを先に切断）
+//  2. SendNwTVIDClose（その後でチューナー終了コマンドを送る）
+//
 // SrvPipeを開いたままCloseNWTVを送ると正常終了できない場合がある。
 // deferの後入れ先出し特性を利用して、conn.Closeより後にdeferすること。
 func (c *Client) SendNwTVIDClose(nwtvID int32) error {
@@ -528,7 +531,35 @@ func (c *Client) SendNwTVIDClose(nwtvID int32) error {
 	return err
 }
 
-// OpenViewStream はEpgDataCap_BonのSrvPipeストリームをTCP経由で受信するための
+// OpenViewStreamWithRetry はSrvPipeストリームへの接続をリトライ付きで試みる。
+//
+// SetCh成功直後はEpgDataCap_BonがFIFOを準備中のため即座には成功しない。
+// 0.1秒から徐々に伸ばしながら最大 timeout まで待つ（KonomiTV方式）。
+//
+// 【注意】失敗時にSendNwTVIDCloseを呼んではいけない。
+// Closeしてしまうと次のSetChで別プロセスが起動してしまい、
+// プロセスIDが毎回変わって永遠に成功しなくなる。
+func (c *Client) OpenViewStreamWithRetry(processID int32, timeout time.Duration) (net.Conn, error) {
+	deadline := time.Now().Add(timeout)
+	wait := 100 * time.Millisecond
+	var lastErr error
+	for time.Now().Before(deadline) {
+		conn, err := c.openViewStream(processID)
+		log.Printf("OpenViewStream: processID=%d err=%v", processID, err)
+		if err == nil {
+			return conn, nil
+		}
+		lastErr = err
+		time.Sleep(wait)
+		wait += 100 * time.Millisecond
+		if wait > time.Second {
+			wait = time.Second
+		}
+	}
+	return nil, fmt.Errorf("OpenViewStream timed out after %s: %w", timeout, lastErr)
+}
+
+// openViewStream はEpgDataCap_BonのSrvPipeストリームをTCP経由で受信するための
 // コネクションを開く。成功するとそのコネクションにTSデータが流れ続ける。
 //
 // 【仕組み】EDCBのCMD2_EPG_SRV_RELAY_VIEW_STREAMコマンドを送ると、
@@ -540,27 +571,27 @@ func (c *Client) SendNwTVIDClose(nwtvID int32) error {
 // [cmd:4LE][payloadSize:4LE][processID:4LE]
 // レスポンスヘッダー [ret:4LE][size:4LE] を受信後、
 // sizeバイトを読み捨てた後にそのままストリームデータが流れてくる。
-//
-// 【リトライ必須】SetCh成功直後はEpgDataCap_BonがFIFOを準備中のため
-// このコマンドは失敗する（ret=0）。成功するまでリトライが必要。
-func (c *Client) OpenViewStream(processID int32) (net.Conn, error) {
+func (c *Client) openViewStream(processID int32) (net.Conn, error) {
 	w := newWriter()
 	w.writeInt(int32(cmdRelayViewStream))
 	w.writeInt(int32(4)) // payloadSize
 	w.writeInt(processID)
 
-	conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", c.host, c.port), c.timeout)
+	conn, err := net.DialTimeout("tcp", net.JoinHostPort(c.host, strconv.Itoa(c.port)), c.timeout)
 	if err != nil {
 		return nil, err
 	}
-	conn.SetDeadline(time.Now().Add(c.timeout))
+	if err := conn.SetDeadline(time.Now().Add(c.timeout)); err != nil {
+		conn.Close()
+		return nil, err
+	}
 	if _, err := conn.Write(w.buf); err != nil {
 		conn.Close()
 		return nil, err
 	}
 
 	header := make([]byte, 8)
-	if err := readFull(conn, header); err != nil {
+	if _, err := io.ReadFull(conn, header); err != nil {
 		conn.Close()
 		return nil, err
 	}
@@ -568,16 +599,22 @@ func (c *Client) OpenViewStream(processID int32) (net.Conn, error) {
 	size := binary.LittleEndian.Uint32(header[4:])
 	if ret != cmdSuccess {
 		conn.Close()
-		return nil, fmt.Errorf("OpenViewStream failed: %d", ret)
+		return nil, fmt.Errorf("OpenViewStream failed: ret=%d", ret)
 	}
 	// レスポンスペイロードを読み捨て、以降はストリームデータ
-	discard := make([]byte, size)
-	if err := readFull(conn, discard); err != nil {
-		conn.Close()
-		return nil, err
+	if size > 0 {
+		discard := make([]byte, size)
+		if _, err := io.ReadFull(conn, discard); err != nil {
+			conn.Close()
+			return nil, err
+		}
 	}
 
 	// Deadlineをリセットしてストリーミング用に開放
-	conn.SetDeadline(time.Time{})
+	if err := conn.SetDeadline(time.Time{}); err != nil {
+		conn.Close()
+		return nil, err
+	}
 	return conn, nil
 }
+

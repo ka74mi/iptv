@@ -4,6 +4,8 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/ka74mi/iptv/api"
@@ -12,35 +14,51 @@ import (
 
 func main() {
 	edcbHost := getEnv("EDCB_HOST", "edcb")
-	edcbPort := 4510
+	edcbPort, err := strconv.Atoi(getEnv("EDCB_PORT", "4510"))
+	if err != nil {
+		log.Fatalf("invalid EDCB_PORT: %v", err)
+	}
+
+	// BASE_URL はスキームを含む完全なURLで指定する。
+	// 例: http://192.168.0.100:18080 または https://your-host.ts.net
 	baseURL := getEnv("BASE_URL", "http://localhost:8080")
+	if !strings.HasPrefix(baseURL, "http://") && !strings.HasPrefix(baseURL, "https://") {
+		log.Fatalf("BASE_URL must start with http:// or https://: %q", baseURL)
+	}
 
 	client := api.NewClient(edcbHost, edcbPort)
 
 	http.HandleFunc("/playlist", func(w http.ResponseWriter, r *http.Request) {
 		services, err := client.EnumService()
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			log.Printf("EnumService error: %v", err)
+			http.Error(w, "internal server error", http.StatusInternalServerError)
 			return
 		}
 		w.Header().Set("Content-Type", "application/x-mpegurl")
-		w.Write([]byte(handler.GenerateM3U(services, baseURL)))
+		if _, err := w.Write([]byte(handler.GenerateM3U(services, baseURL))); err != nil {
+			log.Printf("write error: %v", err)
+		}
 	})
 
 	http.HandleFunc("/epg", func(w http.ResponseWriter, r *http.Request) {
 		now := time.Now()
 		seis, err := client.EnumPgInfoEx(now, now.Add(7*24*time.Hour))
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			log.Printf("EnumPgInfoEx error: %v", err)
+			http.Error(w, "internal server error", http.StatusInternalServerError)
 			return
 		}
 		xmltv, err := handler.GenerateXMLTV(seis)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			log.Printf("GenerateXMLTV error: %v", err)
+			http.Error(w, "internal server error", http.StatusInternalServerError)
 			return
 		}
 		w.Header().Set("Content-Type", "application/xml")
-		w.Write(xmltv)
+		if _, err := w.Write(xmltv); err != nil {
+			log.Printf("write error: %v", err)
+		}
 	})
 
 	http.HandleFunc("/stream/", handler.StreamHandler(client))
