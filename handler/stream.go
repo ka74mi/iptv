@@ -1,22 +1,15 @@
 package handler
 
 import (
-	"io"
 	"log"
 	"net/http"
+	"os/exec"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/ka74mi/iptv/api"
 )
-
-// tsBufPool はTSストリーム転送用バッファのプール。
-// TSパケット(188byte)×256 = 48KiB。複数同時ストリーム時のアロケーションを抑制する。
-var tsBufPool = sync.Pool{
-	New: func() any { return make([]byte, 188*256) },
-}
 
 // StreamHandler はHTTPリクエストを受けてEDCBからTSストリームを転送するハンドラ。
 //
@@ -26,7 +19,7 @@ var tsBufPool = sync.Pool{
 //  1. SendNwTVMode(2)               - TCP送信モードをグローバル設定
 //  2. SendNwTVIDSetCh()             - チューナー起動、EpgDataCap_BonのプロセスIDを取得
 //  3. OpenViewStreamWithRetry()     - SrvPipeストリームのTCP接続確立（リトライ込み）
-//  4. io.CopyBuffer()               - TSデータをHTTPクライアントに転送
+//  4. tsreadex | w                  - TSデータをtsreadex経由でHTTPクライアントに転送
 //  5. conn.Close()                  - SrvPipe接続を先に切断
 //  6. SendNwTVIDClose()             - チューナー終了（必ずconn.Closeの後）
 func StreamHandler(client *api.Client) http.HandlerFunc {
@@ -93,20 +86,41 @@ func StreamHandler(client *api.Client) http.HandlerFunc {
 			f.Flush()
 		}
 
-		buf := tsBufPool.Get().([]byte)
-		defer tsBufPool.Put(buf)
-
 		done := make(chan struct{})
 		go func() {
 			defer close(done)
-			n, err := io.CopyBuffer(w, conn, buf)
-			log.Printf("io.CopyBuffer done: n=%d err=%v", n, err)
+
+			// tsreadexでTSストリームを整形してクライアントに転送する。
+			//
+			// オプションの意図:
+			//   -n {sid}  サービスID指定でサービスを選択しPIDを固定する。
+			//             -a/-b/-c/-u はこのフィルタが有効なときのみ機能する。
+			//   -a 13     1+4+8: 第1音声補完 + モノラル→ステレオ変換 + デュアルモノを第1/第2に分離
+			//   -b 3      第2音声がなければ第1音声をコピー（デュアルモノ分離後の副音声保持）
+			//   -c 1      字幕ストリームを補完（存在すれば通す）
+			//   -u 2      文字スーパーは削除
+			//   -         stdinから読む（パイプ入力）
+			cmd := exec.CommandContext(ctx, "tsreadex",
+				"-n", strconv.Itoa(int(sid)),
+				"-a", "13",
+				"-b", "0",
+				"-c", "1",
+				"-u", "2",
+				"-",
+			)
+			cmd.Stdin = conn
+			cmd.Stdout = w
+			cmd.Stderr = nil
+
+			if err := cmd.Run(); err != nil {
+				log.Printf("tsreadex error: %v", err)
+			}
 		}()
 
 		select {
 		case <-ctx.Done():
 			// クライアントが切断した場合。
-			// conn.Closeでio.CopyBufferのブロックを解除する。
+			// conn.Closeでtsreadexのstdinを閉じてプロセスを終了させる。
 			// deferのconn.Closeと二重になるが問題ない。
 			log.Printf("client disconnected: %s", r.URL.Path)
 			conn.Close()
