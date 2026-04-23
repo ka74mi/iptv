@@ -18,6 +18,7 @@ type xmlTV struct {
 type xmlChannel struct {
 	ID          string `xml:"id,attr"`
 	DisplayName string `xml:"display-name"`
+	Icon        *xmlIcon     `xml:"icon,omitempty"`
 }
 
 type xmlProgramme struct {
@@ -28,7 +29,11 @@ type xmlProgramme struct {
 	Desc    string `xml:"desc,omitempty"`
 }
 
-func GenerateXMLTV(seis []api.ServiceEventInfo) ([]byte, error) {
+type xmlIcon struct {
+	Src string `xml:"src,attr"`
+}
+
+func GenerateXMLTV(seis []api.ServiceEventInfo, baseURL string, logos *api.LogoCache) ([]byte, error) {
 	// 7日分の実測値から 1サービスあたり約195番組のため *200 で確保
 	tv := xmlTV{
 		Channels:   make([]xmlChannel, 0, len(seis)),
@@ -44,10 +49,16 @@ func GenerateXMLTV(seis []api.ServiceEventInfo) ([]byte, error) {
 			sei.ServiceInfo.Tsid,
 			sei.ServiceInfo.Sid,
 		)
-		tv.Channels = append(tv.Channels, xmlChannel{
+		ch := xmlChannel{
 			ID:          tvgID,
 			DisplayName: sei.ServiceInfo.ServiceName,
-		})
+		}
+		if logos != nil && logos.Get(sei.ServiceInfo.Onid, sei.ServiceInfo.Sid) != nil {
+			ch.Icon = &xmlIcon{
+				Src: fmt.Sprintf("%s/logo/%d/%d.png", baseURL, sei.ServiceInfo.Onid, sei.ServiceInfo.Sid),
+			}
+		}
+		tv.Channels = append(tv.Channels, ch)
 
 		for _, e := range sei.EventList {
 			if !e.HasTime || !e.HasDuration {

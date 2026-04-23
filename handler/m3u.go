@@ -25,7 +25,7 @@ func groupTitle(onid uint16) string {
 	}
 }
 
-func GenerateM3U(services []api.ServiceInfo, baseURL string) string {
+func GenerateM3U(services []api.ServiceInfo, baseURL string, logos *api.LogoCache) string {
 	var sb strings.Builder
 	sb.WriteString("#EXTM3U\n")
 	for _, s := range services {
@@ -33,12 +33,16 @@ func GenerateM3U(services []api.ServiceInfo, baseURL string) string {
 			continue
 		}
 		tvgID := fmt.Sprintf("%d.%d.%d", s.Onid, s.Tsid, s.Sid)
+		tvgLogo := ""
+		if logos != nil && logos.Get(s.Onid, s.Sid) != nil {
+			tvgLogo = fmt.Sprintf("%s/logo/%d/%d.png", baseURL, s.Onid, s.Sid)
+		}
 		sb.WriteString(fmt.Sprintf(
-			"#KODIPROP:mimetype=video/mp2t\n#EXTINF:-1 tvg-id=%q tvg-name=%q group-title=%q,%s\n",
-			tvgID, s.ServiceName, groupTitle(s.Onid), s.ServiceName,
+			"#KODIPROP:mimetype=video/mp2t\n#EXTINF:-1 tvg-id=%q tvg-name=%q tvg-logo=%q group-title=%q,%s\n",
+			tvgID, s.ServiceName, tvgLogo, groupTitle(s.Onid), s.ServiceName,
 		))
-		// baseURL はスキームを含む完全なURL（例: http://192.168.0.100:18080）
 		sb.WriteString(fmt.Sprintf("%s/stream/%d/%d/%d\n", baseURL, s.Onid, s.Tsid, s.Sid))
 	}
 	return sb.String()
 }
+
