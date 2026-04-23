@@ -28,15 +28,18 @@ func main() {
 
 	client := api.NewClient(edcbHost, edcbPort)
 
+	services, err := client.EnumService()
+	if err != nil {
+		log.Fatalf("EnumService error: %v", err)
+	}
+	logos, err := api.NewLogoCache(client, services)
+	if err != nil {
+		log.Printf("NewLogoCache error: %v", err)
+	}
+
 	http.HandleFunc("/playlist", func(w http.ResponseWriter, r *http.Request) {
-		services, err := client.EnumService()
-		if err != nil {
-			log.Printf("EnumService error: %v", err)
-			http.Error(w, "internal server error", http.StatusInternalServerError)
-			return
-		}
 		w.Header().Set("Content-Type", "application/x-mpegurl")
-		if _, err := w.Write([]byte(handler.GenerateM3U(services, baseURL))); err != nil {
+		if _, err := w.Write([]byte(handler.GenerateM3U(services, baseURL, logos))); err != nil {
 			log.Printf("write error: %v", err)
 		}
 	})
@@ -49,7 +52,7 @@ func main() {
 			http.Error(w, "internal server error", http.StatusInternalServerError)
 			return
 		}
-		xmltv, err := handler.GenerateXMLTV(seis)
+		xmltv, err := handler.GenerateXMLTV(seis, baseURL, logos)
 		if err != nil {
 			log.Printf("GenerateXMLTV error: %v", err)
 			http.Error(w, "internal server error", http.StatusInternalServerError)
@@ -62,6 +65,7 @@ func main() {
 	})
 
 	http.HandleFunc("/stream/", handler.StreamHandler(client))
+	http.HandleFunc("/logo/", handler.LogoHandler(logos))
 
 	log.Println("listening on :8080")
 	log.Fatal(http.ListenAndServe(":8080", nil))

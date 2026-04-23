@@ -91,6 +91,11 @@ const (
 	cmdRelayViewStream = 301  // ViewアプリのSrvPipeストリームをTCP転送
 )
 
+const (
+    cmdFileCopy  = 1060
+    cmdFileCopy2 = 2060
+)
+
 // FILETIME (1601年からの100ナノ秒) → time.Time
 func fileTimeToTime(ft uint64) time.Time {
 	const epochDiff = 116444736000000000
@@ -403,6 +408,35 @@ func (c *Client) EnumService() ([]ServiceInfo, error) {
 	return services, err
 }
 
+type FileData struct {
+	Name string
+	Data []byte
+}
+
+func readFileData(r *reader) (FileData, error) {
+	sub, err := r.readStruct()
+	if err != nil {
+		return FileData{}, err
+	}
+	var f FileData
+	if f.Name, err = sub.readString(); err != nil {
+		return f, err
+	}
+	dataSize, err := sub.readInt()
+	if err != nil {
+		return f, err
+	}
+	if _, err = sub.readInt(); err != nil { // パディング
+		return f, err
+	}
+	if sub.pos+int(dataSize) > len(sub.buf) {
+		return f, fmt.Errorf("readFileData: out of range")
+	}
+	f.Data = make([]byte, dataSize)
+	copy(f.Data, sub.buf[sub.pos:sub.pos+int(dataSize)])
+	return f, nil
+}
+
 func (c *Client) EnumPgInfoEx(start, end time.Time) ([]ServiceEventInfo, error) {
 	payload := make([]byte, 32)
 	// 全サービス対象フィルタ（onid/tsid/sid をすべて 0xFFFF で埋める）
@@ -456,6 +490,16 @@ func (w *writer) writeInt(v int32) {
 
 func (w *writer) writeUint(v uint32) {
 	w.buf = binary.LittleEndian.AppendUint32(w.buf, v)
+}
+
+func (w *writer) writeString(s string) {
+    u16 := utf16.Encode([]rune(s))
+    size := int32(6 + len(u16)*2)
+    w.writeInt(size)
+    for _, v := range u16 {
+        w.writeUshort(v)
+    }
+    w.writeUshort(0) // null終端
 }
 
 // SendNwTVMode はEDCBのグローバルなNetworkTV送信モードを設定する。
@@ -616,5 +660,51 @@ func (c *Client) openViewStream(processID int32) (net.Conn, error) {
 		return nil, err
 	}
 	return conn, nil
+}
+
+// SendFileCopy はEDCBサーバー上のファイルを転送する。
+// name にはSettingディレクトリからの相対パスを渡す。
+func (c *Client) SendFileCopy(name string) ([]byte, error) {
+	w := newWriter()
+	w.writeString(name)
+	return c.sendCmd(cmdFileCopy, w.buf)
+}
+
+// SendFileCopy2 は複数ファイルをまとめて転送する。
+// name に "LogoData\\*.*" を指定するとディレクトリ内ファイルリストが取得できる。
+func (c *Client) SendFileCopy2(names []string) ([]FileData, error) {
+	w := newWriter()
+	w.writeUshort(5) // CMD_VER
+	// vector<string>
+	pos := len(w.buf)
+	w.writeInt(0) // サイズ仮置き
+	w.writeInt(int32(len(names)))
+	for _, name := range names {
+		w.writeString(name)
+	}
+	binary.LittleEndian.PutUint32(w.buf[pos:], uint32(len(w.buf)-pos))
+
+	rbuf, err := c.sendCmd(cmdFileCopy2, w.buf)
+	if err != nil {
+		return nil, err
+	}
+	r := newReader(rbuf)
+	ver, err := r.readUshort()
+	if err != nil {
+		return nil, err
+	}
+	if ver < 5 {
+		return nil, fmt.Errorf("SendFileCopy2: unsupported version %d", ver)
+	}
+	var result []FileData
+	err = r.readVector(func(inner *reader) error {
+		f, err := readFileData(inner)
+		if err != nil {
+			return err
+		}
+		result = append(result, f)
+		return nil
+	})
+	return result, err
 }
 
