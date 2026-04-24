@@ -3,7 +3,7 @@ WORKDIR /app
 COPY . .
 RUN CGO_ENABLED=0 go build -o iptv .
 
-FROM debian:bookworm AS tsreadexbuilder
+FROM debian:trixie-20260421 AS tsreadexbuilder
 RUN apt-get update && apt-get install -y --no-install-recommends \
     g++ make git ca-certificates
 RUN git clone https://github.com/xtne6f/tsreadex /tsreadex
