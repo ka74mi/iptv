@@ -1,4 +1,4 @@
-FROM golang:1.26-bookworm AS gobuilder
+FROM golang:1.26-trixie AS gobuilder
 WORKDIR /app
 COPY . .
 RUN CGO_ENABLED=0 go build -o iptv .
