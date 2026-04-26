@@ -32,8 +32,8 @@ func parseLogoIni(data []byte) map[string]int {
 func parseLogoIndex(data []byte) []string {
 	var names []string
 	for _, line := range strings.Split(string(data), "\n") {
-		a := strings.SplitN(strings.TrimSpace(line), " ", 4)
-		if len(a) != 4 {
+		a := strings.Fields(strings.TrimSpace(line))
+		if len(a) < 4 {
 			continue
 		}
 		name := a[3]
