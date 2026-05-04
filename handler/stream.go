@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"io"
 	"log"
 	"net/http"
 	"os/exec"
@@ -19,9 +20,10 @@ import (
 //  1. SendNwTVMode(2)               - TCP送信モードをグローバル設定
 //  2. SendNwTVIDSetCh()             - チューナー起動、EpgDataCap_BonのプロセスIDを取得
 //  3. OpenViewStreamWithRetry()     - SrvPipeストリームのTCP接続確立（リトライ込み）
-//  4. tsreadex | w                  - TSデータをtsreadex経由でHTTPクライアントに転送
-//  5. conn.Close()                  - SrvPipe接続を先に切断
-//  6. SendNwTVIDClose()             - チューナー終了（必ずconn.Closeの後）
+//  4. syncAndSkipTS()               - 先頭100パケットを読み捨て過渡期をスキップ
+//  5. tsreadex | w                  - TSデータをtsreadex経由でHTTPクライアントに転送
+//  6. conn.Close()                  - SrvPipe接続を先に切断
+//  7. SendNwTVIDClose()             - チューナー終了（必ずconn.Closeの後）
 func StreamHandler(client *api.Client) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		log.Printf("stream request: %s", r.URL.Path)
@@ -90,13 +92,22 @@ func StreamHandler(client *api.Client) http.HandlerFunc {
 		go func() {
 			defer close(done)
 
+			pr, pw := io.Pipe()
+			go func() {
+				defer pw.Close()
+				// 切り捨てるパケットの数(50)
+				if err := syncAndSkipTS(conn, pw, 50); err != nil {
+					log.Printf("syncAndSkipTS error: %v", err)
+				}
+			}()
+
 			// tsreadexでTSストリームを整形してクライアントに転送する。
 			//
 			// オプションの意図:
 			//   -n {sid}  サービスID指定でサービスを選択しPIDを固定する。
 			//             -a/-b/-c/-u はこのフィルタが有効なときのみ機能する。
 			//   -a 13     1+4+8: 第1音声補完 + モノラル→ステレオ変換 + デュアルモノを第1/第2に分離
-			//   -b 3      第2音声がなければ第1音声をコピー（デュアルモノ分離後の副音声保持）
+			//   -b 0      第2音声はそのまま（補完なし）
 			//   -c 1      字幕ストリームを補完（存在すれば通す）
 			//   -u 2      文字スーパーは削除
 			//   -         stdinから読む（パイプ入力）
@@ -108,7 +119,7 @@ func StreamHandler(client *api.Client) http.HandlerFunc {
 				"-u", "2",
 				"-",
 			)
-			cmd.Stdin = conn
+			cmd.Stdin = pr
 			cmd.Stdout = w
 			cmd.Stderr = nil
 
@@ -128,6 +139,40 @@ func StreamHandler(client *api.Client) http.HandlerFunc {
 			log.Printf("stream ended: %s", r.URL.Path)
 		}
 	}
+}
+
+// syncAndSkipTS はTSストリームの先頭を0x47同期バイトで揃え、
+// skipPackets枚のパケットを読み捨ててからwに転送する。
+// チューナー起動直後の過渡期（PMT未確定・PCR未揃い）をスキップする目的。
+//
+// 【読み捨て量】
+// 100パケット ≒ 18.8KB。チューナーコールドスタート時の不安定期を
+// カバーする保守的な値。症状が解消しない場合は増やして調整する。
+func syncAndSkipTS(r io.Reader, w io.Writer, skipPackets int) error {
+	const packetSize = 188
+	const syncByte = 0x47
+
+	buf := make([]byte, 1)
+	// 0x47を探して188バイト境界に同期する
+	for {
+		if _, err := io.ReadFull(r, buf); err != nil {
+			return err
+		}
+		if buf[0] == syncByte {
+			break
+		}
+	}
+
+	// 0x47の残り187バイト + 残り(skipPackets-1)パケット分を読み捨て
+	skip := make([]byte, (packetSize-1)+(packetSize*(skipPackets-1)))
+	if _, err := io.ReadFull(r, skip); err != nil {
+		return err
+	}
+	log.Printf("syncAndSkipTS: skipped %d packets", skipPackets)
+
+	// 以降はそのままwに転送
+	_, err := io.Copy(w, r)
+	return err
 }
 
 // parseStreamPath は "/stream/{onid}/{tsid}/{sid}" 形式のパスを解析する。
