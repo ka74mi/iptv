@@ -26,14 +26,14 @@ EpgDataCap_Bon
 
 ### 1. イメージのビルド
 ```bash
-git clone --depth 1 https://github.com/ka74mi/iptv
-cd iptv
-podman build -t iptv .
+$ git clone --depth 1 https://github.com/ka74mi/iptv
+$ cd iptv
+$ podman build -t iptv .
 ```
 
 ### 2. コンテナの起動
 ```bash
-podman run -d \
+$ podman run -d \
   --name iptv \
   --network <EDCB と同じネットワーク> \
   -p 8080:8080 \
@@ -49,26 +49,42 @@ podman run -d \
 | `EDCB_PORT` | EDCB の TCP API ポート番号 | `4510` | `4510` |
 | `BASE_URL` | M3U プレイリストに IPTV クライアントから到達できる URL を指定します。`http://` または `https://` から始める必要があります | `http://localhost:8080` | `http://192.168.0.100:8080` / `https://your-host.ts.net` |
 
-### 3. EDCB コンテナと同じネットワークで起動する例
+### 3. 起動例
+
+#### podman run
 ```bash
-podman network create dtv-network
-
-# EDCB コンテナ
-podman run -d \
-  --name edcb \
-  --network dtv-network \
-  -p 4510:4510 \
-  -p 5510:5510 \
-  edcb
-
-# iptv コンテナ
-podman run -d \
+$ podman run -d \
   --name iptv \
   --network dtv-network \
   -p 8080:8080 \
   -e EDCB_HOST=edcb \
   -e BASE_URL=http://192.168.0.100:8080 \
   iptv
+```
+
+#### Podman Quadlet
+```ini
+# ~/.config/containers/systemd/iptv.container
+
+[Unit]
+Description=EDCB IPTV service
+After=edcb.service
+Requires=edcb.service
+
+[Container]
+Image=localhost:5000/iptv:latest
+Pull=always
+ContainerName=iptv
+Network=dtv-network
+PublishPort=8080:8080
+Environment=EDCB_HOST=edcb
+Environment=BASE_URL=http://192.168.0.100:8080
+
+[Service]
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
 ```
 
 ## エンドポイント
