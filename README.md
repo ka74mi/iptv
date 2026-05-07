@@ -73,7 +73,7 @@ Requires=edcb.service
 
 [Container]
 Image=localhost:5000/iptv:latest
-Pull=always
+AutoUpdate=registry
 ContainerName=iptv
 Network=dtv-network
 PublishPort=8080:8080
@@ -107,7 +107,7 @@ XMLTV の EPG URL を登録してください：
 ## セキュリティ
 このツールは信頼できるローカルネットワーク (LAN) 内での利用を想定しています。
 
-外部からアクセスする場合は Tailscale の利用を推奨します。
+外部からアクセスする場合は VPN の利用を推奨します。
 
 ## 免責事項
 このプロジェクトは Claude との対話を通じて開発されています。
