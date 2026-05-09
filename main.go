@@ -64,7 +64,7 @@ func main() {
 		}
 	})
 
-	http.HandleFunc("/health", handler.HealthHandler(client))
+	http.HandleFunc("/health", handler.HealthHandler())
 	http.HandleFunc("/stream/", handler.StreamHandler(client))
 	http.HandleFunc("/logo/", handler.LogoHandler(logos))
 
