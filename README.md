@@ -1,4 +1,4 @@
-# iptv
+
 EDCB の TCP API を利用して M3U プレイリストと XMLTV 形式の EPG を生成し、SrvPipe 経由で IPTV ストリーム配信を行うサービスです。
 
 M3U/XMLTV に対応した IPTV クライアントで地上波・BS/CS の視聴ができます。
@@ -97,6 +97,11 @@ Network=dtv-network
 PublishPort=8080:8080
 Environment=EDCB_HOST=edcb
 Environment=BASE_URL=http://192.168.0.100:8080
+HealthCmd=CMD /usr/local/bin/healthcheck
+HealthInterval=30s
+HealthTimeout=15s
+HealthRetries=3
+HealthStartPeriod=10s
 
 [Service]
 Restart=on-failure
