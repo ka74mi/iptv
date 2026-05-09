@@ -20,7 +20,7 @@ func main() {
 	}
 
 	// BASE_URL はスキームを含む完全なURLで指定する。
-	// 例: http://192.168.0.100:18080 または https://your-host.ts.net
+	// 例: http://192.168.0.100:8080 または https://your-host.ts.net
 	baseURL := getEnv("BASE_URL", "http://localhost:8080")
 	if !strings.HasPrefix(baseURL, "http://") && !strings.HasPrefix(baseURL, "https://") {
 		log.Fatalf("BASE_URL must start with http:// or https://: %q", baseURL)
