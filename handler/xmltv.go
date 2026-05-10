@@ -16,9 +16,9 @@ type xmlTV struct {
 }
 
 type xmlChannel struct {
-	ID          string `xml:"id,attr"`
-	DisplayName string `xml:"display-name"`
-	Icon        *xmlIcon     `xml:"icon,omitempty"`
+	ID          string   `xml:"id,attr"`
+	DisplayName string   `xml:"display-name"`
+	Icon        *xmlIcon `xml:"icon,omitempty"`
 }
 
 type xmlProgramme struct {

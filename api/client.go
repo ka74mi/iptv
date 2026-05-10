@@ -92,8 +92,8 @@ const (
 )
 
 const (
-    cmdFileCopy  = 1060
-    cmdFileCopy2 = 2060
+	cmdFileCopy  = 1060
+	cmdFileCopy2 = 2060
 )
 
 // FILETIME (1601年からの100ナノ秒) → time.Time
@@ -102,7 +102,7 @@ func fileTimeToTime(ft uint64) time.Time {
 	if ft < epochDiff {
 		return time.Unix(0, 0)
 	}
-	nsec := int64((ft-epochDiff) * 100)
+	nsec := int64((ft - epochDiff) * 100)
 	return time.Unix(0, nsec).In(jst)
 }
 
@@ -493,13 +493,13 @@ func (w *writer) writeUint(v uint32) {
 }
 
 func (w *writer) writeString(s string) {
-    u16 := utf16.Encode([]rune(s))
-    size := int32(6 + len(u16)*2)
-    w.writeInt(size)
-    for _, v := range u16 {
-        w.writeUshort(v)
-    }
-    w.writeUshort(0) // null終端
+	u16 := utf16.Encode([]rune(s))
+	size := int32(6 + len(u16)*2)
+	w.writeInt(size)
+	for _, v := range u16 {
+		w.writeUshort(v)
+	}
+	w.writeUshort(0) // null終端
 }
 
 // SendNwTVMode はEDCBのグローバルなNetworkTV送信モードを設定する。
@@ -707,4 +707,3 @@ func (c *Client) SendFileCopy2(names []string) ([]FileData, error) {
 	})
 	return result, err
 }
-

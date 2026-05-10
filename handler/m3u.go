@@ -45,4 +45,3 @@ func GenerateM3U(services []api.ServiceInfo, baseURL string, logos *api.LogoCach
 	}
 	return sb.String()
 }
-

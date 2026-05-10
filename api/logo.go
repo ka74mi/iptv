@@ -1,9 +1,9 @@
 package api
 
 import (
-	"strings"
 	"fmt"
 	"log"
+	"strings"
 )
 
 // parseLogoIni は LogoData.ini をパースして onid+sid → logo_id のマップを返す。
@@ -129,4 +129,3 @@ func NewLogoCache(client *Client, services []ServiceInfo) (*LogoCache, error) {
 func (lc *LogoCache) Get(onid, sid uint16) []byte {
 	return lc.logos[uint32(onid)<<16|uint32(sid)]
 }
-
