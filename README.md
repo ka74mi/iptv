@@ -98,8 +98,8 @@ PublishPort=8080:8080
 Environment=EDCB_HOST=edcb
 Environment=BASE_URL=http://192.168.0.100:8080
 HealthCmd=CMD /usr/local/bin/healthcheck
-HealthInterval=30s
-HealthTimeout=15s
+HealthInterval=120s
+HealthTimeout=10s
 HealthRetries=3
 HealthStartPeriod=10s
 
