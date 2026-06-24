@@ -7,7 +7,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     CGO_ENABLED=0 GOARCH=$TARGETARCH go build -ldflags="-s" -trimpath -o /bin/iptv . && \
     CGO_ENABLED=0 GOARCH=$TARGETARCH go build -ldflags="-s" -trimpath -o /bin/healthcheck ./healthcheck
 
-FROM --platform=$BUILDPLATFORM debian:trixie-20260610 AS tsreadexbuilder
+FROM --platform=$BUILDPLATFORM debian:trixie-20260623 AS tsreadexbuilder
 RUN apt-get update && apt-get install -y --no-install-recommends \
     g++ make git ca-certificates
 RUN git clone https://github.com/xtne6f/tsreadex /tsreadex
