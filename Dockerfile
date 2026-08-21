@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-FROM --platform=$BUILDPLATFORM golang:1.26-trixie AS gobuilder
+FROM --platform=$BUILDPLATFORM golang:1.27-trixie AS gobuilder
 WORKDIR /app
 ARG TARGETARCH
 RUN --mount=type=cache,target=/go/pkg/mod \
