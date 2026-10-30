@@ -1,0 +1,92 @@
+name: CI
+
+# いつ動かすか: main への push と、すべての Pull Request
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# ワークフローが使える権限を最小（リポジトリの読み取りのみ）にする。
+# 必要になったときだけ、ジョブごとに追加する。
+permissions:
+  contents: read
+
+# 同じブランチで続けて push したとき、古い実行は取り消す（無駄な待ち時間を減らす）。
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# 【アクションの固定について】
+# アクションは、タグ（v7.0.1 など）で参照している。実際に動くコミットは
+# .github/workflows/actions.lock に記録されており、GitHub Actions は記録されたコミットを実行する
+# （タグが付け替えられても、記録されたコミットが使われる）。
+# アクションを追加・変更したら、ローカルで `gh actions-lock` を実行して actions.lock も一緒にコミットする。
+# 更新は Renovate が、actions.lock も含めて PR にしてくれる。
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # persist-credentials: false … チェックアウト後に認証情報を .git に残さない（pushしないので不要）。
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      # Go のバージョンは go.mod の記述に合わせる（ここに別の番号を書かない）。
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: gofmt（整形されていないファイルがあれば失敗）
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "次のファイルが gofmt で整形されていません。'gofmt -w .' を実行してください:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go build
+        run: go build ./...
+
+      # -race: データ競合の検出。-count=1: テスト結果のキャッシュを使わず毎回実行。
+      - name: go test
+        run: go test -race -count=1 ./...
+
+  # Dockerfile が実際にビルドできることを確認する（イメージは公開しない）。
+  docker:
+    name: Docker build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - name: docker build
+        run: docker build --tag iptv:ci .
+
+  # actions.lock がワークフローの内容と一致していること、記録されたコミットが
+  # 上流で確認できることを検証する（GitHub 公式の gh-actions-lock の --verify）。
+  # uses を変更したのに actions.lock を更新し忘れると、ここで失敗する。
+  lockfile:
+    name: Actions lockfile
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      # --verify は GitHub の API で参照を確認するため、トークンが必要。
+      GH_TOKEN: ${{ github.token }}
+      # 拡張のバージョン。Renovate が更新を提案する（renovate.json の customManagers）。
+      GH_ACTIONS_LOCK_VERSION: v0.4.0
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - name: gh-actions-lock のインストール
+        run: gh extension install github/gh-actions-lock --pin "${GH_ACTIONS_LOCK_VERSION}"
+      - name: actions.lock の検証
+        run: gh actions-lock --verify

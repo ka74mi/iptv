@@ -1,0 +1,17 @@
+# ビルド成果物
+/iptv
+/bin/
+*.exe
+
+# テスト・計測の出力
+*.test
+*.out
+*.prof
+
+# Go ワークスペース
+go.work
+go.work.sum
+
+# 環境変数ファイル
+.env
+*.env
