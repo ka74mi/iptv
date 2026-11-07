@@ -81,7 +81,7 @@ jobs:
       # --verify は GitHub の API で参照を確認するため、トークンが必要。
       GH_TOKEN: ${{ github.token }}
       # 拡張のバージョン。Renovate が更新を提案する（renovate.json の customManagers）。
-      GH_ACTIONS_LOCK_VERSION: v0.4.0
+      GH_ACTIONS_LOCK_VERSION: v0.4.1
     steps:
       - uses: actions/checkout@v7.0.1
         with:
