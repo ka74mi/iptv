@@ -55,9 +55,9 @@ podman build -t iptv .
 | `REFRESH_INTERVAL` | サービス一覧・ロゴをEDCBから再取得する間隔。`0` で自動更新を無効化します。取得に失敗しても直前の内容を使い続けます | `1h` |
 | `EPG_CACHE_TTL` | `/epg`（XMLTV）の生成結果をキャッシュする時間。`0` でキャッシュしません。EDCBに接続できない間は、期限切れでも最大1時間は前回の結果を返します | `5m` |
 | `LOG_LEVEL` | ログのレベル（`debug`、`info`、`warn`、`error`）。`debug` ではチューナーの起動・終了や SrvPipe 接続のリトライも出力します | `info` |
-| `LOG_FORMAT` | ログの形式。（`text`、`json`） | `text` |
+| `LOG_FORMAT` | ログの形式（`text`、`json`）。 | `text` |
 | `LISTEN_ADDR` | HTTP サーバーの待ち受けアドレス（`host:port`）。コンテナ内のアドレスなので通常は変更不要で、公開側のポートは `-p` で指定します | `:8080` |
-| `BASE_URL` | IPTV クライアントから到達できるこのプロキシの URL（http:// または https:// から始める必要があります）| `http://localhost:8080` |
+| `BASE_URL` | IPTV クライアントから到達できるこのプロキシの URL（`http://` または `https://` から始める必要があります）| `http://localhost:8080` |
 
 ### コンテナの起動
 #### podman run
