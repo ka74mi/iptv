@@ -1,0 +1,52 @@
+name: govulncheck
+
+# Go の既知の脆弱性を検査する（Go 公式の govulncheck）。
+# 標準ライブラリの脆弱性は Dependabot では検知できないため、これで補う。
+#
+# 【必須チェックにしない】
+# 新しい脆弱性は、コードを変えなくても公開される。必須チェックにすると、
+# 無関係な PR までブロックされるため、main の保護ルールには追加しないこと。
+# 失敗したときは、Actions タブか通知で気づいて対応する。
+on:
+  push:
+    branches: [main]
+  pull_request:
+  # 週1回（月曜 03:17 UTC）。コードの変更がなくても、新しい脆弱性の公開に気づけるようにする。
+  schedule:
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: govulncheck-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  govulncheck:
+    name: govulncheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      # govulncheck のバージョン。Renovate が更新を提案する（renovate.json の customManagers）。
+      # 公式の golang/govulncheck-action は使わない。内部で govulncheck@latest を実行する
+      # （バージョンが固定されず、actions.lock でも守れない）ため、ここで版を固定して直接実行する。
+      GOVULNCHECK_VERSION: v1.9.0
+      # govulncheck が要求する Go が setup-go の版より新しいときに、別のツールチェーンを
+      # 黙ってダウンロードしないようにする（その場合は失敗して気づけるようにする）。
+      GOTOOLCHAIN: local
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      # Go は go.mod の記述に合わせる。check-latest: true で、その系列の最新パッチを使う
+      # （「最新のパッチでもまだ修正されていない脆弱性」を検知するため）。
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          check-latest: true
+
+      - name: govulncheck
+        run: go run "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}" ./...
