@@ -2,7 +2,7 @@ package main
 
 import (
 	"bytes"
-	"encoding/json"
+	"encoding/json/v2"
 	"strings"
 	"testing"
 )
@@ -20,6 +20,7 @@ func TestNewLoggerLevelAndFormat(t *testing.T) {
 		t.Fatalf("lines = %q", lines)
 	}
 	var rec map[string]any
+	// json/v2 は重複キーをエラーにするため、ログ行に同名キーが混ざった場合も検出できる
 	if err := json.Unmarshal([]byte(lines[0]), &rec); err != nil {
 		t.Fatalf("not JSON: %v: %q", err, lines[0])
 	}
