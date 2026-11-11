@@ -2,7 +2,7 @@ package handler
 
 import (
 	"bytes"
-	"encoding/json"
+	"encoding/json/v2"
 	"io"
 	"log/slog"
 	"net/http"
@@ -33,6 +33,7 @@ func (b *lockedBuffer) records(t *testing.T) []map[string]any {
 			continue
 		}
 		var rec map[string]any
+		// json/v2 は重複キーをエラーにするため、ログ行に同名キーが混ざった場合も検出できる
 		if err := json.Unmarshal([]byte(line), &rec); err != nil {
 			t.Fatalf("not JSON: %q", line)
 		}
