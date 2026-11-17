@@ -43,7 +43,7 @@ jobs:
 
       # Go は go.mod の記述に合わせる。check-latest: true で、その系列の最新パッチを使う
       # （「最新のパッチでもまだ修正されていない脆弱性」を検知するため）。
-      - uses: actions/setup-go@v7.0.0
+      - uses: actions/setup-go@v7.1.0
         with:
           go-version-file: go.mod
           check-latest: true

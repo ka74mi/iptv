@@ -35,7 +35,7 @@ jobs:
           persist-credentials: false
 
       # Go のバージョンは go.mod の記述に合わせる（ここに別の番号を書かない）。
-      - uses: actions/setup-go@v7.0.0
+      - uses: actions/setup-go@v7.1.0
         with:
           go-version-file: go.mod
 
