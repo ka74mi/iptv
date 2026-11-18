@@ -32,7 +32,7 @@ jobs:
       # govulncheck のバージョン。Renovate が更新を提案する（renovate.json の customManagers）。
       # 公式の golang/govulncheck-action は使わない。内部で govulncheck@latest を実行する
       # （バージョンが固定されず、actions.lock でも守れない）ため、ここで版を固定して直接実行する。
-      GOVULNCHECK_VERSION: v1.9.0
+      GOVULNCHECK_VERSION: v1.10.0
       # govulncheck が要求する Go が setup-go の版より新しいときに、別のツールチェーンを
       # 黙ってダウンロードしないようにする（その場合は失敗して気づけるようにする）。
       GOTOOLCHAIN: local
