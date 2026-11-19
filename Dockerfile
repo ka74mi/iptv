@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1
+# syntax=docker/dockerfile:1@sha256:4edf897a3ffa55b89f906fc8cc78afdb3f1834cc9c7083565e611a8a7d5fe99e
 FROM --platform=$BUILDPLATFORM golang:1.27-trixie AS gobuilder
 WORKDIR /app
 ARG TARGETARCH
@@ -9,7 +9,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 
 # tsreadex はネイティブバイナリなので、--platform=$BUILDPLATFORM を付けずターゲットの
 # アーキテクチャでビルドする（付けるとクロスビルド時に別アーキのバイナリが入る）。
-FROM debian:13 AS tsreadexbuilder
+FROM debian:13@sha256:9c6e381421d0f48d1b8133e573f33c185ee16cbf505eda9c4a8a4791b25ea8a6 AS tsreadexbuilder
 RUN apt-get update && apt-get install -y --no-install-recommends \
     g++ make git ca-certificates
 # 再現性とサプライチェーン対策のため、ブランチやタグではなくコミットSHAで固定する。
@@ -23,7 +23,7 @@ RUN git init -q /tsreadex && cd /tsreadex && \
     test "$(git rev-parse HEAD)" = "${TSREADEX_COMMIT}"
 RUN make -C /tsreadex LDFLAGS=-static
 
-FROM gcr.io/distroless/static-debian13:nonroot
+FROM gcr.io/distroless/static-debian13:nonroot@sha256:aafe993665bf6200db38a02c11a9351e782a84b6a45e7f33b6695638c88e3931
 COPY --from=gobuilder /bin/iptv /usr/local/bin/iptv
 COPY --from=gobuilder /bin/healthcheck /usr/local/bin/healthcheck
 COPY --from=tsreadexbuilder /tsreadex/tsreadex /usr/local/bin/tsreadex
