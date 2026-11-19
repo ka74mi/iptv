@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1@sha256:4edf897a3ffa55b89f906fc8cc78afdb3f1834cc9c7083565e611a8a7d5fe99e
-FROM --platform=$BUILDPLATFORM golang:1.27-trixie AS gobuilder
+FROM --platform=$BUILDPLATFORM golang:1.27-trixie@sha256:f18c3d73a184fb0582828510722e723b63a93f7188d11dd223d9be6f6880e65d AS gobuilder
 WORKDIR /app
 ARG TARGETARCH
 RUN --mount=type=cache,target=/go/pkg/mod \
