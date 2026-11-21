@@ -55,7 +55,8 @@ func (c *Client) connect(ctx context.Context) (conn net.Conn, stop func() bool, 
 		conn.Close()
 		return nil, nil, err
 	}
-	stop = context.AfterFunc(ctx, func() { conn.SetDeadline(time.Now()) })
+	// 中断が目的なので、deadline の設定に失敗しても（接続がすでに閉じている場合など）できることはない。
+	stop = context.AfterFunc(ctx, func() { _ = conn.SetDeadline(time.Now()) })
 	return conn, stop, nil
 }
 

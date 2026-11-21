@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -44,12 +45,14 @@ func (f *fakeEDCB) serve() {
 			cmd := binary.LittleEndian.Uint32(h)
 			size := binary.LittleEndian.Uint32(h[4:])
 			p := make([]byte, size)
-			io.ReadFull(c, p)
+			if _, err := io.ReadFull(c, p); err != nil {
+				return
+			}
 			resp := func(payload []byte) {
 				o := make([]byte, 8)
 				binary.LittleEndian.PutUint32(o, 1)
 				binary.LittleEndian.PutUint32(o[4:], uint32(len(payload)))
-				c.Write(append(o, payload...))
+				_, _ = c.Write(append(o, payload...))
 			}
 			switch cmd {
 			case 1073:
@@ -64,7 +67,7 @@ func (f *fakeEDCB) serve() {
 				f.setIDs = append(f.setIDs, id)
 				f.mu.Unlock()
 				if f.setChHang.Load() {
-					io.Copy(io.Discard, c)
+					_, _ = io.Copy(io.Discard, c)
 					return
 				}
 				pl := make([]byte, 4)
@@ -77,7 +80,7 @@ func (f *fakeEDCB) serve() {
 				resp(nil)
 			case 301:
 				if f.viewFail.Load() {
-					c.Write(append(binary.LittleEndian.AppendUint32(nil, 0), 0, 0, 0, 0)) // ret=0, size=0
+					_, _ = c.Write(append(binary.LittleEndian.AppendUint32(nil, 0), 0, 0, 0, 0)) // ret=0, size=0
 					return
 				}
 				resp(nil)
@@ -97,10 +100,15 @@ func (f *fakeEDCB) serve() {
 func TestStreamConcurrentAndCleanup(t *testing.T) {
 	// 偽tsreadex（catで素通し）
 	dir := t.TempDir()
-	os.WriteFile(dir+"/tsreadex", []byte("#!/bin/sh\nexec cat\n"), 0o755)
+	if err := os.WriteFile(dir+"/tsreadex", []byte("#!/bin/sh\nexec cat\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	t.Setenv("PATH", dir+":"+os.Getenv("PATH"))
 
-	ln, _ := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
 	f := &fakeEDCB{ln: ln}
 	go f.serve()
 	port := ln.Addr().(*net.TCPAddr).Port
@@ -121,7 +129,9 @@ func TestStreamConcurrentAndCleanup(t *testing.T) {
 				return
 			}
 			buf := make([]byte, 188*60)
-			io.ReadFull(resp.Body, buf)
+			if _, err := io.ReadFull(resp.Body, buf); err != nil {
+				t.Error(err)
+			}
 			resp.Body.Close()
 		}(i)
 	}
@@ -168,9 +178,14 @@ func newStreamServer(cl *api.Client, services []api.ServiceInfo, max int) *httpt
 func setupFake(t *testing.T) (*fakeEDCB, *api.Client) {
 	t.Helper()
 	dir := t.TempDir()
-	os.WriteFile(dir+"/tsreadex", []byte("#!/bin/sh\nexec cat\n"), 0o755)
+	if err := os.WriteFile(dir+"/tsreadex", []byte("#!/bin/sh\nexec cat\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	t.Setenv("PATH", dir+":"+os.Getenv("PATH"))
-	ln, _ := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
 	t.Cleanup(func() { ln.Close() })
 	f := &fakeEDCB{ln: ln}
 	go f.serve()
@@ -246,7 +261,9 @@ func TestStreamConcurrencyLimit(t *testing.T) {
 	if resp1.StatusCode != http.StatusOK {
 		t.Fatalf("1本目 = %d", resp1.StatusCode)
 	}
-	io.ReadFull(resp1.Body, make([]byte, 188*10))
+	if _, err := io.ReadFull(resp1.Body, make([]byte, 188*10)); err != nil {
+		t.Fatal(err)
+	}
 
 	// 2本目: 上限超過で503 + Retry-After、チューナーは起動しない
 	resp2, err := http.Get(srv.URL + "/stream/1/2/101")
@@ -300,7 +317,9 @@ func TestStreamServerShutdownClosesTuner(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer resp.Body.Close()
-	io.ReadFull(resp.Body, make([]byte, 188*10))
+	if _, err := io.ReadFull(resp.Body, make([]byte, 188*10)); err != nil {
+		t.Fatal(err)
+	}
 
 	cancelBase()
 	deadline := time.Now().Add(5 * time.Second)
@@ -420,7 +439,9 @@ func TestStreamClientDisconnectDuringViewRetry(t *testing.T) {
 	if d := time.Since(start); d > 2*time.Second {
 		t.Fatalf("closing took %v after disconnect", d)
 	}
-	<-errCh
+	if err := <-errCh; !errors.Is(err, context.Canceled) {
+		t.Errorf("client err = %v, want context.Canceled", err)
+	}
 }
 
 // SetChの応答待ち中に切断された場合も、EDCB側で起動済みの可能性があるため閉じる。
@@ -432,15 +453,22 @@ func TestStreamClientDisconnectDuringSetCh(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	req, _ := http.NewRequestWithContext(ctx, "GET", srv.URL+"/stream/1/2/100", nil)
+	errCh := make(chan error, 1)
 	go func() {
-		if resp, err := http.DefaultClient.Do(req); err == nil {
+		resp, err := http.DefaultClient.Do(req)
+		if err == nil {
 			resp.Body.Close()
 		}
+		errCh <- err
 	}()
 
 	waitUntil(t, 3*time.Second, "SetCh", func() bool { return f.setChCount() == 1 })
 	cancel()
 	waitUntil(t, 3*time.Second, "tuner close", func() bool { return f.closedCount() == 1 })
+
+	if err := <-errCh; !errors.Is(err, context.Canceled) {
+		t.Errorf("client err = %v, want context.Canceled", err)
+	}
 
 	f.mu.Lock()
 	defer f.mu.Unlock()
