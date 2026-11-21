@@ -1,0 +1,118 @@
+diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml
+index 2f7466b..853663f 100644
+--- a/.github/workflows/ci.yml
++++ b/.github/workflows/ci.yml
+@@ -39,18 +39,6 @@ jobs:
+         with:
+           go-version-file: go.mod
+
+-      - name: gofmt（整形されていないファイルがあれば失敗）
+-        run: |
+-          unformatted="$(gofmt -l .)"
+-          if [ -n "$unformatted" ]; then
+-            echo "次のファイルが gofmt で整形されていません。'gofmt -w .' を実行してください:"
+-            echo "$unformatted"
+-            exit 1
+-          fi
+-
+-      - name: go vet
+-        run: go vet ./...
+-
+       - name: go build
+         run: go build ./...
+
+@@ -90,3 +78,56 @@ jobs:
+         run: gh extension install github/gh-actions-lock --pin "${GH_ACTIONS_LOCK_VERSION}"
+       - name: actions.lock の検証
+         run: gh actions-lock --verify
++
++  # golangci-lint による静的解析。設定は .golangci.yml。
++  lint:
++    name: golangci-lint
++    runs-on: ubuntu-latest
++    timeout-minutes: 10
++    env:
++      # golangci-lint のバージョン。Renovate が更新を提案する（renovate.json の customManagers）。
++      GOLANGCI_LINT_VERSION: v2.15.0
++    steps:
++      - uses: actions/checkout@v7.0.1
++        with:
++          persist-credentials: false
++      - uses: actions/setup-go@v7.1.0
++        with:
++          go-version-file: go.mod
++      - uses: golangci/golangci-lint-action@v9.3.0
++        with:
++          version: ${{ env.GOLANGCI_LINT_VERSION }}
++
++  # ワークフロー自体の検査。actionlint は文法・型の誤り、zizmor はセキュリティ上の問題を見つける。
++  workflow-lint:
++    name: Workflow lint
++    runs-on: ubuntu-latest
++    timeout-minutes: 10
++    env:
++      # 各ツールのバージョン。Renovate が更新を提案する（renovate.json の customManagers）。
++      ACTIONLINT_VERSION: v1.7.12
++      # zizmor は 1.32.0 以上が必要（actions.lock への対応が 1.32.0 から）。
++      ZIZMOR_VERSION: 1.32.0
++    steps:
++      - uses: actions/checkout@v7.0.1
++        with:
++          persist-credentials: false
++      - uses: actions/setup-go@v7.1.0
++        with:
++          go-version-file: go.mod
++
++      # actionlint は run: 内のシェルを shellcheck で検査する（PATH にないと黙って省略される）。
++      # 入っていることを確認し、なければここで失敗させる。
++      - name: shellcheck の確認
++        run: shellcheck --version
++
++      - name: actionlint
++        run: go run "github.com/rhysd/actionlint/cmd/actionlint@${ACTIONLINT_VERSION}" -color
++
++      - uses: astral-sh/setup-uv@v10.3.3
++
++      # 指摘があると終了コード 11〜14 で失敗する。GH_TOKEN があるとオンライン監査も行う。
++      - name: zizmor
++        run: uvx "zizmor@${ZIZMOR_VERSION}" --format=github .
++        env:
++          GH_TOKEN: ${{ github.token }}
+diff --git a/renovate.json b/renovate.json
+index e8aa69f..5b9a0f3 100644
+--- a/renovate.json
++++ b/renovate.json
+@@ -32,6 +32,33 @@
+       "depNameTemplate": "golang.org/x/vuln",
+       "datasourceTemplate": "go",
+       "versioningTemplate": "semver"
++    },
++    {
++      "customType": "regex",
++      "description": "CI で使う golangci-lint のバージョン",
++      "managerFilePatterns": ["/^\\.github/workflows/[^/]+\\.ya?ml$/"],
++      "matchStrings": ["GOLANGCI_LINT_VERSION:\\s*(?<currentValue>v\\d+\\.\\d+\\.\\d+)"],
++      "depNameTemplate": "golangci/golangci-lint",
++      "datasourceTemplate": "github-releases",
++      "versioningTemplate": "semver"
++    },
++    {
++      "customType": "regex",
++      "description": "CI で使う actionlint のバージョン",
++      "managerFilePatterns": ["/^\\.github/workflows/[^/]+\\.ya?ml$/"],
++      "matchStrings": ["ACTIONLINT_VERSION:\\s*(?<currentValue>v\\d+\\.\\d+\\.\\d+)"],
++      "depNameTemplate": "github.com/rhysd/actionlint",
++      "datasourceTemplate": "go",
++      "versioningTemplate": "semver"
++    },
++    {
++      "customType": "regex",
++      "description": "CI で使う zizmor のバージョン",
++      "managerFilePatterns": ["/^\\.github/workflows/[^/]+\\.ya?ml$/"],
++      "matchStrings": ["ZIZMOR_VERSION:\\s*(?<currentValue>\\d+\\.\\d+\\.\\d+)"],
++      "depNameTemplate": "zizmor",
++      "datasourceTemplate": "pypi",
++      "versioningTemplate": "pep440"
+     }
+   ],
+   "packageRules": [
