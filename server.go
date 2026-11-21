@@ -59,7 +59,9 @@ func serve(ctx context.Context, ln net.Listener, h http.Handler) error {
 	defer cancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		slog.Error("shutdown failed, closing remaining connections", "err", err)
-		srv.Close()
+		if err := srv.Close(); err != nil {
+			slog.Error("close failed", "err", err)
+		}
 	}
 	if err := <-errCh; err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err

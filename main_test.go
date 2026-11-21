@@ -66,16 +66,26 @@ func TestServeClosesSlowHeaderConnections(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx, stop := context.WithCancel(context.Background())
-	defer stop()
-	go serve(ctx, ln, http.NotFoundHandler())
+	done := make(chan error, 1)
+	go func() { done <- serve(ctx, ln, http.NotFoundHandler()) }()
+	defer func() {
+		stop()
+		if err := <-done; err != nil {
+			t.Errorf("serve returned %v", err)
+		}
+	}()
 
 	c, err := net.Dial("tcp", ln.Addr().String())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer c.Close()
-	c.Write([]byte("GET / HTTP/1.1\r\nHost: x\r\n")) // ヘッダーを終端しない
-	c.SetReadDeadline(time.Now().Add(readHeaderTimeout + 3*time.Second))
+	if _, err := c.Write([]byte("GET / HTTP/1.1\r\nHost: x\r\n")); err != nil { // ヘッダーを終端しない
+		t.Fatal(err)
+	}
+	if err := c.SetReadDeadline(time.Now().Add(readHeaderTimeout + 3*time.Second)); err != nil {
+		t.Fatal(err)
+	}
 	buf := make([]byte, 1024)
 	start := time.Now()
 	for {

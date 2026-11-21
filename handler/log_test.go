@@ -66,7 +66,9 @@ func TestStreamLogsCarryStructuredAttributes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	io.ReadFull(resp.Body, make([]byte, 188*60))
+	if _, err := io.ReadFull(resp.Body, make([]byte, 188*60)); err != nil {
+		t.Fatal(err)
+	}
 	resp.Body.Close()
 	waitUntil(t, 3*time.Second, "tuner close", func() bool { return f.closedCount() == 1 })
 	waitUntil(t, 3*time.Second, "close log", func() bool { return findRecord(out.records(t), "tuner closed") != nil })
@@ -105,7 +107,9 @@ func TestStreamRejectionIsLoggedAsWarning(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer resp1.Body.Close()
-	io.ReadFull(resp1.Body, make([]byte, 188*10))
+	if _, err := io.ReadFull(resp1.Body, make([]byte, 188*10)); err != nil {
+		t.Fatal(err)
+	}
 	resp2, err := http.Get(srv.URL + "/stream/1/2/101")
 	if err != nil {
 		t.Fatal(err)

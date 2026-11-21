@@ -103,8 +103,8 @@ func newFakeEDCB(t *testing.T, reply []byte) *Client {
 				if _, err := io.ReadFull(c, h); err != nil {
 					return
 				}
-				io.CopyN(io.Discard, c, int64(binary.LittleEndian.Uint32(h[4:])))
-				c.Write(cat(le32(1), le32(uint32(len(reply))), reply))
+				_, _ = io.CopyN(io.Discard, c, int64(binary.LittleEndian.Uint32(h[4:])))
+				_, _ = c.Write(cat(le32(1), le32(uint32(len(reply))), reply))
 			}()
 		}
 	}()
@@ -275,9 +275,9 @@ func FuzzParsers(f *testing.F) {
 	)))
 	f.Add(cat(le16(5), encVector(encStruct(encString("f"), le32(2), le32(0), []byte{1, 2}))))
 	f.Fuzz(func(t *testing.T, b []byte) {
-		parseServiceList(b)
-		parseProgramList(b)
-		parseFileCopy2(b)
+		_, _ = parseServiceList(b)
+		_, _ = parseProgramList(b)
+		_, _ = parseFileCopy2(b)
 		newReader(b).str()
 	})
 }

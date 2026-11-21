@@ -35,7 +35,7 @@ func newServer(t *testing.T, handler func(net.Conn)) *Client {
 
 // 応答しないEDCBに対しても、キャンセルで直ちに戻る（既定のタイムアウト15秒を待たない）。
 func TestSendCmdAbortsOnCancel(t *testing.T) {
-	c := newServer(t, func(conn net.Conn) { io.Copy(io.Discard, conn) }) // 読むだけで応答しない
+	c := newServer(t, func(conn net.Conn) { _, _ = io.Copy(io.Discard, conn) }) // 読むだけで応答しない
 
 	ctx, cancel := context.WithCancel(context.Background())
 	time.AfterFunc(100*time.Millisecond, cancel)
@@ -51,7 +51,7 @@ func TestSendCmdAbortsOnCancel(t *testing.T) {
 }
 
 func TestSendCmdHonorsContextDeadline(t *testing.T) {
-	c := newServer(t, func(conn net.Conn) { io.Copy(io.Discard, conn) })
+	c := newServer(t, func(conn net.Conn) { _, _ = io.Copy(io.Discard, conn) })
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 	if _, err := c.EnumService(ctx); !errors.Is(err, context.DeadlineExceeded) {
@@ -71,8 +71,8 @@ func TestSendCmdWithCancelledContextDoesNotConnect(t *testing.T) {
 // SrvPipeの準備待ちのリトライ中にキャンセルされたら、残りの待ち時間を使わずに戻る。
 func TestOpenViewStreamWithRetryAbortsOnCancel(t *testing.T) {
 	c := newServer(t, func(conn net.Conn) { // 常に ret=0（準備できていない）
-		io.CopyN(io.Discard, conn, 12)
-		conn.Write(make([]byte, 8))
+		_, _ = io.CopyN(io.Discard, conn, 12)
+		_, _ = conn.Write(make([]byte, 8))
 	})
 	ctx, cancel := context.WithCancel(context.Background())
 	time.AfterFunc(250*time.Millisecond, cancel)
@@ -91,10 +91,10 @@ func TestOpenViewStreamWithRetryAbortsOnCancel(t *testing.T) {
 // （停止は呼び出し側が conn.Close で行う）。
 func TestOpenViewStreamConnSurvivesLaterCancel(t *testing.T) {
 	c := newServer(t, func(conn net.Conn) {
-		io.CopyN(io.Discard, conn, 12)
-		conn.Write(binary.LittleEndian.AppendUint32(binary.LittleEndian.AppendUint32(nil, 1), 0)) // ret=1 size=0
-		time.Sleep(300 * time.Millisecond)                                                        // キャンセルより後にデータを流す
-		conn.Write([]byte("TSDATA"))
+		_, _ = io.CopyN(io.Discard, conn, 12)
+		_, _ = conn.Write(binary.LittleEndian.AppendUint32(binary.LittleEndian.AppendUint32(nil, 1), 0)) // ret=1 size=0
+		time.Sleep(300 * time.Millisecond)                                                               // キャンセルより後にデータを流す
+		_, _ = conn.Write([]byte("TSDATA"))
 	})
 	ctx, cancel := context.WithCancel(context.Background())
 	conn, err := c.OpenViewStreamWithRetry(ctx, 1, 5*time.Second)
@@ -105,7 +105,9 @@ func TestOpenViewStreamConnSurvivesLaterCancel(t *testing.T) {
 	cancel()
 
 	buf := make([]byte, 6)
-	conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	if err := conn.SetReadDeadline(time.Now().Add(3 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := io.ReadFull(conn, buf); err != nil || string(buf) != "TSDATA" {
 		t.Fatalf("read = %q, %v", buf, err)
 	}

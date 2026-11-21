@@ -198,7 +198,10 @@ func TestEPGGzipNegotiation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dec, _ := io.ReadAll(zr)
+	dec, err := io.ReadAll(zr)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !bytes.Equal(dec, plain.Body.Bytes()) {
 		t.Fatal("decompressed body differs from identity body")
 	}
